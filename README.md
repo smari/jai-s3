@@ -28,6 +28,17 @@ You can use the library with a simple import:
 ```
 
 
+## Regenerating bindings
+
+You can regenerate the bindings using
+```
+jai generate.jai
+```
+
+Note that there are a few cleanups you might need to do afterwards, due to the bindings generator getting confused
+about `#align` statements and such.
+
+
 ## Functions
 
 ### Utilities
