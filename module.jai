@@ -161,7 +161,7 @@ list_buckets_handler : S3ListServiceHandler = .{
 };
 
 list_buckets_callback :: (ownerId: *u8, ownerDisplayName: *u8, bucketName: *u8, creationDateSeconds: s64, callbackData: *void) -> S3Status #c_call {
-    ctx : Context;
+    ctx : #Context;
 
     list : *[..]S3Bucket = callbackData;
 
@@ -178,7 +178,7 @@ list_buckets_callback :: (ownerId: *u8, ownerDisplayName: *u8, bucketName: *u8, 
 }
 
 get_object_buffer_data_callback :: (bufferSize: s32, buffer: *u8, callbackData: *void) -> S3Status #c_call {
-    ctx : Context;
+    ctx : #Context;
     builder : *String_Builder = callbackData;
     tmp : string;
 
@@ -192,7 +192,7 @@ get_object_buffer_data_callback :: (bufferSize: s32, buffer: *u8, callbackData: 
 }
 
 get_object_file_data_callback :: (bufferSize: s32, buffer: *u8, callbackData: *void) -> S3Status #c_call {
-    ctx : Context;
+    ctx : #Context;
     file : *File = callbackData;
 
     push_context ctx {
@@ -207,7 +207,7 @@ list_bucket_callback :: (isTruncated: s32, nextMarker: *u8, contentsCount: s32,
     contents: *S3ListBucketContent, commonPrefixesCount: s32, commonPrefixes: **u8, callbackData: *void) -> S3Status #c_call {
 
     list : *[..]S3Object = callbackData;
-    ctx : Context;
+    ctx : #Context;
 
     push_context ctx {
         for 0..contentsCount-1 {
