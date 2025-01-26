@@ -61,11 +61,36 @@ S3_get_bucket :: (conn: S3ConnectionInfo, bucket_name: string) -> S3BucketContex
 }
 
 
+S3Response :: struct {
+    status : S3Status;
+    props  : *S3ResponseProperties;
+    error  : *S3ErrorDetails;
+    data   : *void;
+}
+
+
 /////////////////////// Wrapper functions //////////////////////////////////
 
-S3_list_buckets :: (conn: S3ConnectionInfo) -> [..]S3Bucket {
-    list : [..]S3Bucket;
-    S3_list_service(conn.protocol, to_c_string(conn.access_key), to_c_string(conn.secret_key), to_c_string(conn.host), null, *list_buckets_handler, cast(*void) *list);
+#import "Debug";
+
+S3_list_buckets :: (conn: S3ConnectionInfo) -> *[..]S3Bucket {
+    list := New([..]S3Bucket);
+    response : S3Response;
+    response.data = list;
+
+    access_key := to_c_string(conn.access_key);
+    secret_key := to_c_string(conn.secret_key);
+    host := to_c_string(conn.host);
+
+    S3_list_service(
+        conn.protocol, 
+        access_key, 
+        secret_key, 
+        host,
+        null, 
+        *list_buckets_handler, 
+        *response
+    );
     return list;
 }
 
@@ -120,18 +145,83 @@ S3_get_object_to_file :: (conn: S3ConnectionInfo, bucket_name: string, key: stri
     return S3_get_object_to_file(bucket, key, file);
 }
 
+S3Upload :: struct {
+    data        : *string;
+    total_bytes : s64;
+    bytes_sent  : s64;
+}
+
+S3_put_object_from_buffer :: (conn: S3ConnectionInfo, bucket_name: string, key: string, data: string) -> S3Response {
+    response : S3Response;
+    upload : S3Upload;
+    upload.data = *data;
+    upload.total_bytes = data.count;
+    response.data = *upload;
+    bucket := S3_get_bucket(conn, bucket_name);
+    S3_put_object(*bucket, 
+        to_c_string(key), 
+        cast(u64) data.count, 
+        null, 
+        null, 
+        *put_object_handler, 
+        *response);
+
+    return response;
+}
+
+S3_bucket_exists :: (conn: S3ConnectionInfo, bucket_name: string) -> bool {
+    response: S3Response;
+
+    S3_test_bucket(conn.protocol, conn.uri_style, 
+        to_c_string(conn.access_key), 
+        to_c_string(conn.secret_key), 
+        to_c_string(conn.host),
+        to_c_string(bucket_name),
+        0, null, // Location constraint is not used; AWS users might care about this.
+        null,    // Request context is not used 
+        *response_handler, 
+        *response);
+
+    // TODO: This does not free the props. Need to add a free function.
+
+    return response.props != null;
+}
+
+
+S3_create_bucket :: (conn: S3ConnectionInfo, bucket_name: string, acl: S3CannedAcl = .Private) -> S3Response {
+    bucket := S3_get_bucket(conn, bucket_name);
+    response : S3Response;
+    
+    S3_create_bucket(conn.protocol, 
+        to_c_string(conn.access_key), 
+        to_c_string(conn.secret_key), 
+        to_c_string(conn.host),
+        to_c_string(bucket_name),
+        acl,
+        null,   // Location constraint is not used; AWS users might care about this. 
+        null,   // Request context is not used
+        *response_handler, 
+        *response
+    );
+
+    return response;
+}
+
 
 /////////////////////////////// Don't touch stuff below here /////////////////////////////////
 
 #scope_file
 
 response_properties_callback :: (props: *S3ResponseProperties, callbackData: *void) -> S3Status #c_call {
+    p : *S3Response = callbackData;
+    p.props = props;
     return .OK;
 }
 
-response_status : S3Status;
 response_complete_callback :: (status: S3Status, error: *S3ErrorDetails, callbackData: *void) #c_call {
-    response_status = status;
+    p : *S3Response = callbackData;
+    p.status = status;
+    p.error = error;
     return;
 }
 
@@ -155,17 +245,21 @@ get_object_to_file_handler : S3GetObjectHandler = .{
     responseHandler = response_handler
 };
 
+put_object_handler : S3PutObjectHandler = .{
+    responseHandler = response_handler,
+    putObjectDataCallback = put_object_data_callback
+};
+
 list_buckets_handler : S3ListServiceHandler = .{
     listServiceCallback = list_buckets_callback,
     responseHandler = response_handler
 };
 
 list_buckets_callback :: (ownerId: *u8, ownerDisplayName: *u8, bucketName: *u8, creationDateSeconds: s64, callbackData: *void) -> S3Status #c_call {
-    ctx : #Context;
+    response: *S3Response = callbackData;
+    list : *[..]S3Bucket = response.data;
 
-    list : *[..]S3Bucket = callbackData;
-
-    push_context ctx {
+    push_context {
         bucket : S3Bucket;
         bucket.name = copy_string(to_string(bucketName));
         bucket.owner_id = copy_string(to_string(ownerId));
@@ -226,6 +320,23 @@ list_bucket_callback :: (isTruncated: s32, nextMarker: *u8, contentsCount: s32,
 
     return .OK;
 }
+
+put_object_data_callback :: (bufferSize: s32, buffer: *u8, callbackData: *void) -> s32 #c_call {
+    response : *S3Response = callbackData;
+    upload : *S3Upload = response.data;
+    data := upload.data;
+
+    bytes : s64 = bufferSize;
+    if data.count < bytes {
+        bytes = data.count;
+    }
+    memcpy(buffer, data.data, bytes);
+    data.data += bytes;
+    data.count -= bytes;
+    upload.bytes_sent += bytes;
+    return cast,trunc(s32) bytes;
+}
+
 
 unix_timestamp_to_apollo :: (ts: s64) -> Apollo_Time {
     a_seconds := seconds_to_apollo(ts);
